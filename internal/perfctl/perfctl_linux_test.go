@@ -8,6 +8,15 @@ package perfctl
 
 import "testing"
 
+func TestLinuxControllerRejectsInvalidPercent(t *testing.T) {
+	controller := &linuxController{}
+	for _, percent := range []int{-1, 101} {
+		if _, err := controller.Pin(percent); err == nil {
+			t.Errorf("Pin(%d) succeeded", percent)
+		}
+	}
+}
+
 func TestNearest(t *testing.T) {
 	available := []int{100, 200, 400}
 	for _, test := range []struct {
