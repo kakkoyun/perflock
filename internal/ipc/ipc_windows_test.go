@@ -61,11 +61,15 @@ func TestListenRefusesLivePipe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first listener stopped serving: %v", err)
 	}
-	if err := conn.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-accepted; err != nil {
-		t.Fatalf("first listener failed to accept: %v", err)
+	defer conn.Close()
+
+	select {
+	case err := <-accepted:
+		if err != nil {
+			t.Fatalf("first listener failed to accept: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("first listener did not accept connection")
 	}
 }
 
