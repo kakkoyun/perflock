@@ -14,6 +14,7 @@ import (
 
 	"github.com/aclements/perflock/internal/ipc"
 	"github.com/aclements/perflock/internal/perfctl"
+	"github.com/aclements/perflock/internal/powermode"
 )
 
 var theLock PerfLock
@@ -46,7 +47,8 @@ type Server struct {
 	locker    *Locker
 	acquiring bool
 
-	restoreGovernor func() error
+	restoreGovernor  func() error
+	restorePowerMode func() error
 }
 
 func NewServer(c net.Conn) *Server {
@@ -132,12 +134,18 @@ func (s *Server) Serve() {
 					log.Printf("protocol error: setting governor without lock")
 					return
 				}
-				err := s.setGovernor(action.Percent)
-				errString := ""
-				if err != nil {
-					errString = err.Error()
+				if err := gw.Encode(errorString(s.setGovernor(action.Percent))); err != nil {
+					log.Print(err)
+					return
 				}
-				if err := gw.Encode(errString); err != nil {
+
+			case ActionSetPowerMode:
+				if s.locker == nil || s.locker.shared {
+					log.Printf("protocol error: setting power mode without exclusive lock")
+					return
+				}
+				mode := powermode.Mode(action.Mode)
+				if err := gw.Encode(errorString(s.setPowerMode(mode))); err != nil {
 					log.Print(err)
 					return
 				}
@@ -159,7 +167,13 @@ func (s *Server) Serve() {
 }
 
 func (s *Server) drop() {
-	// Restore the CPU governor before releasing the lock.
+	// Restore performance settings before releasing the lock.
+	if s.restorePowerMode != nil {
+		if err := s.restorePowerMode(); err != nil {
+			log.Print(err)
+		}
+		s.restorePowerMode = nil
+	}
 	if s.restoreGovernor != nil {
 		if err := s.restoreGovernor(); err != nil {
 			log.Print(err)
@@ -184,4 +198,24 @@ func (s *Server) setGovernor(percent int) error {
 	}
 	s.restoreGovernor = restore
 	return nil
+}
+
+func (s *Server) setPowerMode(mode powermode.Mode) error {
+	controller, err := powermode.Open()
+	if err != nil {
+		return err
+	}
+	restore, err := controller.Set(mode)
+	if err != nil {
+		return err
+	}
+	s.restorePowerMode = restore
+	return nil
+}
+
+func errorString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

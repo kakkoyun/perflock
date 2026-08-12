@@ -44,6 +44,7 @@ import (
 
 	"github.com/aclements/perflock/internal/ipc"
 	"github.com/aclements/perflock/internal/perfctl"
+	"github.com/aclements/perflock/internal/powermode"
 )
 
 func main() {
@@ -62,6 +63,8 @@ func main() {
 	flagShared := flag.Bool("shared", false, "acquire lock in shared mode (default: exclusive mode)")
 	flagGovernor := newGovernorFlag()
 	flag.Var(flagGovernor, "governor", "set CPU frequency to `percent` between the min and max\n\twhile running command, or \"none\" for no adjustment")
+	flagPowerMode := &powerModeFlag{mode: powermode.Automatic}
+	flag.Var(flagPowerMode, "power-mode", "set macOS system power mode to `auto`, `low`, or `high` while running command")
 	flag.Parse()
 
 	if *flagDaemon {
@@ -109,6 +112,21 @@ func main() {
 			}
 			log.Print("warning: unable to set CPU governor: ", err)
 		}
+	}
+	if flagPowerMode.explicit {
+		if *flagShared {
+			log.Fatal("-power-mode requires an exclusive lock")
+		}
+		if err := c.SetPowerMode(int(flagPowerMode.mode)); err != nil {
+			log.Fatal("setting power mode: ", err)
+		}
+	}
+	for _, message := range powermode.Inspect() {
+		prefix := "info: "
+		if message.Warning {
+			prefix = "warning: "
+		}
+		log.Print(prefix, message.Text)
 	}
 	ignoreSignals()
 	run(cmd)
