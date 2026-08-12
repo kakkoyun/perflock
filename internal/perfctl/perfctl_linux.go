@@ -17,11 +17,17 @@ import (
 const SupportsPinning = true
 
 type linuxController struct {
-	domains []*cpupower.Domain
+	domains []frequencyDomain
+}
+
+type frequencyDomain interface {
+	AvailableRange() (min, max int, available []int)
+	CurrentRange() (min, max int, err error)
+	SetRange(min, max int) error
 }
 
 type linuxSettings struct {
-	domain   *cpupower.Domain
+	domain   frequencyDomain
 	min, max int
 }
 
@@ -34,7 +40,11 @@ func Open() (Controller, error) {
 	if len(domains) == 0 {
 		return nil, fmt.Errorf("discover CPU frequency domains: none found")
 	}
-	return &linuxController{domains: domains}, nil
+	controller := &linuxController{domains: make([]frequencyDomain, len(domains))}
+	for index, domain := range domains {
+		controller.domains[index] = domain
+	}
+	return controller, nil
 }
 
 func (c *linuxController) Pin(percent int) (func() error, error) {

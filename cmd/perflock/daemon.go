@@ -46,11 +46,12 @@ type Server struct {
 	locker    *Locker
 	acquiring bool
 
-	restoreGovernor func() error
+	openPerformanceController func() (perfctl.Controller, error)
+	restoreGovernor           func() error
 }
 
 func NewServer(c net.Conn) *Server {
-	return &Server{c: c}
+	return &Server{c: c, openPerformanceController: perfctl.Open}
 }
 
 func (s *Server) Serve() {
@@ -178,7 +179,10 @@ func (s *Server) drop() {
 }
 
 func (s *Server) setGovernor(percent int) error {
-	controller, err := perfctl.Open()
+	if percent < 0 || percent > 100 {
+		return fmt.Errorf("CPU performance percentage %d is outside 0-100", percent)
+	}
+	controller, err := s.openPerformanceController()
 	if err != nil {
 		return err
 	}
