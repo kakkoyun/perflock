@@ -64,3 +64,12 @@ func (c *Client) SetGovernor(percent int) error {
 	}
 	return fmt.Errorf("%s", err)
 }
+
+func (c *Client) SetPowerMode(mode int) error {
+	var err string
+	c.do(PerfLockAction{ActionSetPowerMode{Mode: mode}}, &err)
+	if err == "" {
+		return nil
+	}
+	return fmt.Errorf("%s", err)
+}

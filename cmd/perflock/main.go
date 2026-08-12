@@ -44,10 +44,15 @@ import (
 
 	"github.com/aclements/perflock/internal/ipc"
 	"github.com/aclements/perflock/internal/perfctl"
+	"github.com/aclements/perflock/internal/powermode"
 )
 
 type governorSetter interface {
 	SetGovernor(percent int) error
+}
+
+type powerModeSetter interface {
+	SetPowerMode(mode int) error
 }
 
 func main() {
@@ -66,6 +71,10 @@ func main() {
 	flagShared := flag.Bool("shared", false, "acquire lock in shared mode (default: exclusive mode)")
 	flagGovernor := newGovernorFlag()
 	flag.Var(flagGovernor, "governor", "set CPU frequency to `percent` between the min and max\n\twhile running command, or \"none\" for no adjustment")
+	flagPowerMode := &powerModeFlag{mode: powermode.Automatic}
+	if powermode.Supported {
+		flag.Var(flagPowerMode, "power-mode", "set macOS system power mode to `auto`, `low`, or `high` while running command")
+	}
 	flag.Parse()
 
 	if *flagDaemon {
@@ -97,6 +106,13 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
+	for _, message := range powermode.Inspect() {
+		prefix := "info: "
+		if message.Warning {
+			prefix = "warning: "
+		}
+		log.Print(prefix, message.Text)
+	}
 	c := NewClient(*flagSocket)
 	if !c.Acquire(*flagShared, true, shellEscapeList(cmd)) {
 		list := c.List()
@@ -113,6 +129,9 @@ func main() {
 	if warning != nil {
 		log.Print("warning: ", warning)
 	}
+	if err := applyPowerMode(c, *flagShared, flagPowerMode); err != nil {
+		log.Fatal(err)
+	}
 	ignoreSignals()
 	run(cmd)
 }
@@ -120,6 +139,19 @@ func main() {
 type governorFlag struct {
 	percent  int
 	explicit bool
+}
+
+func applyPowerMode(client powerModeSetter, shared bool, setting *powerModeFlag) error {
+	if !setting.explicit {
+		return nil
+	}
+	if shared {
+		return fmt.Errorf("-power-mode requires an exclusive lock")
+	}
+	if err := client.SetPowerMode(int(setting.mode)); err != nil {
+		return fmt.Errorf("setting power mode: %w", err)
+	}
+	return nil
 }
 
 func applyGovernor(client governorSetter, shared bool, setting *governorFlag) (warning, fatal error) {

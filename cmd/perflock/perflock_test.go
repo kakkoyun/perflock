@@ -18,6 +18,7 @@ import (
 
 	"github.com/aclements/perflock/internal/ipc"
 	"github.com/aclements/perflock/internal/perfctl"
+	"github.com/aclements/perflock/internal/powermode"
 )
 
 const (
@@ -41,6 +42,137 @@ const (
 // names (starting with @) for the UNIX domain socket to listen on. We don't
 // bother skipping for non-Linux, as that will hopefully make it clear what
 // should be fixed to those who are interested.
+type fakePowerModeSetter struct {
+	modes []int
+	err   error
+}
+
+func (f *fakePowerModeSetter) SetPowerMode(mode int) error {
+	f.modes = append(f.modes, mode)
+	return f.err
+}
+
+func TestApplyPowerMode(t *testing.T) {
+	requestErr := fmt.Errorf("set failed")
+	for _, test := range []struct {
+		name       string
+		shared     bool
+		setting    powerModeFlag
+		requestErr error
+		wantCalls  []int
+		wantErr    string
+	}{
+		{name: "implicit", setting: powerModeFlag{mode: powermode.Automatic}},
+		{
+			name:    "shared rejected",
+			shared:  true,
+			setting: powerModeFlag{mode: powermode.High, explicit: true},
+			wantErr: "-power-mode requires an exclusive lock",
+		},
+		{
+			name:      "success",
+			setting:   powerModeFlag{mode: powermode.High, explicit: true},
+			wantCalls: []int{int(powermode.High)},
+		},
+		{
+			name:       "request failure",
+			setting:    powerModeFlag{mode: powermode.Low, explicit: true},
+			requestErr: requestErr,
+			wantCalls:  []int{int(powermode.Low)},
+			wantErr:    "setting power mode: set failed",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			setter := &fakePowerModeSetter{err: test.requestErr}
+			err := applyPowerMode(setter, test.shared, &test.setting)
+			if got := errorText(err); got != test.wantErr {
+				t.Fatalf("error = %q, want %q", got, test.wantErr)
+			}
+			if fmt.Sprint(setter.modes) != fmt.Sprint(test.wantCalls) {
+				t.Fatalf("SetPowerMode calls = %v, want %v", setter.modes, test.wantCalls)
+			}
+		})
+	}
+}
+
+func TestPowerModeFlag(t *testing.T) {
+	var setting powerModeFlag
+	if err := setting.Set("high"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if setting.mode != powermode.High || !setting.explicit {
+		t.Fatalf("setting = {%v %v}, want {high true}", setting.mode, setting.explicit)
+	}
+	if err := setting.Set("maximum"); err == nil {
+		t.Fatal("unknown power mode succeeded")
+	}
+}
+
+func TestValidatePowerModeRequest(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		server  Server
+		wantErr string
+	}{
+		{name: "no lock", wantErr: "without exclusive lock"},
+		{name: "shared lock", server: Server{locker: &Locker{shared: true}}, wantErr: "without exclusive lock"},
+		{name: "exclusive lock", server: Server{locker: &Locker{shared: false}}},
+		{
+			name: "duplicate",
+			server: Server{
+				locker:           &Locker{shared: false},
+				restorePowerMode: func() error { return nil },
+			},
+			wantErr: "setting power mode twice",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.server.validatePowerModeRequest()
+			if test.wantErr == "" && err != nil {
+				t.Fatalf("validatePowerModeRequest: %v", err)
+			}
+			if test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+				t.Fatalf("validatePowerModeRequest error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestServerPowerModeLifecycle(t *testing.T) {
+	controller := &fakePowerModeController{}
+	server := &Server{
+		openPowerModeController: func() (powermode.Controller, error) {
+			return controller, nil
+		},
+	}
+	if err := server.setPowerMode(powermode.High); err != nil {
+		t.Fatalf("setPowerMode: %v", err)
+	}
+	if controller.mode != powermode.High || server.restorePowerMode == nil {
+		t.Fatalf("controller = {%v %v}, want {high restore}", controller.mode, server.restorePowerMode != nil)
+	}
+	server.drop()
+	if controller.restoreCalls != 1 {
+		t.Fatalf("restore called %d times, want 1", controller.restoreCalls)
+	}
+	if server.restorePowerMode != nil {
+		t.Fatal("drop retained restore function")
+	}
+}
+
+type fakePowerModeController struct {
+	mode         powermode.Mode
+	restoreCalls int
+}
+
+func (f *fakePowerModeController) Set(mode powermode.Mode) (func() error, error) {
+	f.mode = mode
+	return func() error {
+		f.restoreCalls++
+		return nil
+	}, nil
+}
+
 type fakeGovernorSetter struct {
 	percents []int
 	err      error

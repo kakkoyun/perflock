@@ -32,8 +32,15 @@ type ActionSetGovernor struct {
 	Percent int
 }
 
+// ActionSetPowerMode sets the macOS system power mode. The caller must hold an
+// exclusive lock.
+type ActionSetPowerMode struct {
+	Mode int
+}
+
 func init() {
 	gob.Register(ActionAcquire{})
 	gob.Register(ActionList{})
 	gob.Register(ActionSetGovernor{})
+	gob.Register(ActionSetPowerMode{})
 }
