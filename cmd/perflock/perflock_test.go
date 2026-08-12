@@ -252,6 +252,22 @@ func TestExclusive(t *testing.T) {
 	}
 }
 
+func TestListShowsHeldCommand(t *testing.T) {
+	socket := socketName(t)
+	mustStartDaemon(t, socket)
+
+	client := NewClient(socket)
+	const message = "proof-command --flag"
+	if !client.Acquire(false, false, message) {
+		t.Fatal("exclusive lock was not acquired")
+	}
+
+	list := NewClient(socket).List()
+	if len(list) != 1 || !strings.Contains(list[0], message) {
+		t.Fatalf("list = %q, want one entry containing %q", list, message)
+	}
+}
+
 func TestShared(t *testing.T) {
 	t.Parallel()
 

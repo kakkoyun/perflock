@@ -48,7 +48,6 @@ jobs:
         run: go build ./...
 
       - name: Test and report coverage
-        if: runner.os != 'Windows'
         shell: bash
         run: |
           go test -race -count=1 -covermode=atomic \
