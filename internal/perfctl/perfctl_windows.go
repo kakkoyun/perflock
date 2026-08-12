@@ -57,7 +57,11 @@ type systemPowerAPI struct{}
 // Open opens the active Windows power scheme.
 func Open() (Controller, error) {
 	var schemePointer unsafe.Pointer
-	if err := powerCall("get active power scheme", procPowerGetActiveScheme, 0, uintptr(unsafe.Pointer(&schemePointer))); err != nil {
+	result, _, _ := procPowerGetActiveScheme.Call(
+		0,
+		uintptr(unsafe.Pointer(&schemePointer)),
+	)
+	if err := powerResult("get active power scheme", result); err != nil {
 		return nil, err
 	}
 	if schemePointer == nil {
@@ -165,33 +169,37 @@ func (systemPowerAPI) writeDC(scheme, setting *windows.GUID, value uint32) error
 }
 
 func (systemPowerAPI) activate(scheme *windows.GUID) error {
-	return powerCall("activate power scheme", procPowerSetActiveScheme, 0, uintptr(unsafe.Pointer(scheme)))
+	result, _, _ := procPowerSetActiveScheme.Call(
+		0,
+		uintptr(unsafe.Pointer(scheme)),
+	)
+	return powerResult("activate power scheme", result)
 }
 
 func readPowerValue(operation string, proc *windows.LazyProc, scheme, setting *windows.GUID) (uint32, error) {
 	var value uint32
-	err := powerCall(operation, proc,
+	result, _, _ := proc.Call(
 		0,
 		uintptr(unsafe.Pointer(scheme)),
 		uintptr(unsafe.Pointer(&processorSettings)),
 		uintptr(unsafe.Pointer(setting)),
 		uintptr(unsafe.Pointer(&value)),
 	)
-	return value, err
+	return value, powerResult(operation, result)
 }
 
 func writePowerValue(operation string, proc *windows.LazyProc, scheme, setting *windows.GUID, value uint32) error {
-	return powerCall(operation, proc,
+	result, _, _ := proc.Call(
 		0,
 		uintptr(unsafe.Pointer(scheme)),
 		uintptr(unsafe.Pointer(&processorSettings)),
 		uintptr(unsafe.Pointer(setting)),
 		uintptr(value),
 	)
+	return powerResult(operation, result)
 }
 
-func powerCall(operation string, proc *windows.LazyProc, args ...uintptr) error {
-	result, _, _ := proc.Call(args...)
+func powerResult(operation string, result uintptr) error {
 	if result != 0 {
 		return fmt.Errorf("%s: %w", operation, syscall.Errno(result))
 	}
