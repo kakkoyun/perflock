@@ -64,6 +64,9 @@ func TestGovernorFlag(t *testing.T) {
 	if err := flag.Set("101%"); err == nil {
 		t.Fatal("governor above 100% succeeded")
 	}
+	if err := flag.Set("999999999999999999999999%"); err == nil {
+		t.Fatal("overflowing governor percentage succeeded")
+	}
 }
 
 func TestMain(m *testing.M) {
