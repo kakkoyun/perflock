@@ -7,7 +7,7 @@
 //
 // The typical use of perflock is:
 //
-//     perflock [-shared] command...
+//	perflock [-shared] command...
 //
 // This will acquire a system-wide lock while running command.
 //
@@ -24,8 +24,8 @@
 // For convenience, we recommend you create shell aliases for
 // perflock:
 //
-//     alias pl=perflock
-//     alias pls='perflock -shared'
+//	alias pl=perflock
+//	alias pls='perflock -shared'
 //
 // perflock depends on a locking daemon, which can be started with
 // perflock -daemon.
