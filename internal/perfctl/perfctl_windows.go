@@ -27,9 +27,9 @@ var (
 	procPowerWriteDCValueIndex = powrprof.NewProc("PowerWriteDCValueIndex")
 	procPowerSetActiveScheme   = powrprof.NewProc("PowerSetActiveScheme")
 
-	processorSettings = mustGUID("54533251-82be-4824-96c1-47b60b740d00")
-	processorMinimum  = mustGUID("893dee8e-2bef-41e0-89c6-b55d0929964c")
-	processorMaximum  = mustGUID("bc5038f7-23e0-4960-96da-33abaf5935ec")
+	processorSettings = mustGUID("{54533251-82be-4824-96c1-47b60b740d00}")
+	processorMinimum  = mustGUID("{893dee8e-2bef-41e0-89c6-b55d0929964c}")
+	processorMaximum  = mustGUID("{bc5038f7-23e0-4960-96da-33abaf5935ec}")
 )
 
 type windowsController struct {
