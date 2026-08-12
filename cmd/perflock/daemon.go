@@ -146,8 +146,12 @@ func (s *Server) Serve() {
 				}
 
 			case ActionSetGovernor:
-				if s.locker == nil {
-					log.Printf("protocol error: setting governor without lock")
+				if s.locker == nil || s.locker.shared {
+					log.Printf("protocol error: setting governor without exclusive lock")
+					return
+				}
+				if s.restoreGovernor != nil {
+					log.Printf("protocol error: setting governor twice")
 					return
 				}
 				if err := gw.Encode(errorString(s.setGovernor(action.Percent))); err != nil {
