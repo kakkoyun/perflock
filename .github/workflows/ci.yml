@@ -44,6 +44,18 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Verify module graph
+        shell: bash
+        run: |
+          go mod tidy -diff
+          modules="$(go list -m all)"
+          printf '%s\n' "$modules"
+          grep -F 'github.com/tailscale/peercred ' <<<"$modules"
+          if grep -Fq 'inet.af/peercred ' <<<"$modules"; then
+            echo 'legacy inet.af/peercred remains in the module graph' >&2
+            exit 1
+          fi
+
       - name: Build
         run: go build ./...
 

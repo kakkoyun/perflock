@@ -6,13 +6,13 @@ package cpupower
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"strconv"
 	"strings"
 )
 
 func readInt(path string) (int, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
 	}
@@ -20,11 +20,11 @@ func readInt(path string) (int, error) {
 }
 
 func writeInt(path string, val int) error {
-	return ioutil.WriteFile(path, []byte(fmt.Sprintf("%d", val)), 0)
+	return os.WriteFile(path, []byte(fmt.Sprintf("%d", val)), 0)
 }
 
 func readInts(path string) ([]int, error) {
-	data, err := ioutil.ReadFile(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}

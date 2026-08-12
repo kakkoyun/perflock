@@ -40,7 +40,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/aclements/perflock/internal/ipc"
 	"github.com/aclements/perflock/internal/perfctl"
@@ -220,9 +219,8 @@ func run(args []string) {
 	case nil:
 		os.Exit(0)
 	case *exec.ExitError:
-		status := err.Sys().(syscall.WaitStatus)
-		if status.Exited() {
-			os.Exit(status.ExitStatus())
+		if exitCode := err.ExitCode(); exitCode >= 0 {
+			os.Exit(exitCode)
 		}
 		log.Fatal(err)
 	default:
