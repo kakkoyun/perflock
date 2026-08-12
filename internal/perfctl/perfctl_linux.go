@@ -38,6 +38,9 @@ func Open() (Controller, error) {
 }
 
 func (c *linuxController) Pin(percent int) (func() error, error) {
+	if percent < 0 || percent > 100 {
+		return nil, fmt.Errorf("CPU performance percentage %d is outside 0-100", percent)
+	}
 	old := make([]linuxSettings, 0, len(c.domains))
 	for _, domain := range c.domains {
 		min, max, err := domain.CurrentRange()
