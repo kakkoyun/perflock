@@ -11,7 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -91,23 +93,26 @@ func TestExclusive(t *testing.T) {
 	// 1. Start a daemon.
 	mustStartDaemon(t, socket)
 
-	// 2. Start three sleepers in EXCLUSIVE mode, each sleeping for 0.5s.
-	start := time.Now()
-	var sleepers [3]*exec.Cmd
+	// 2. Start three sleepers in EXCLUSIVE mode.
+	var sleepers [3]*testProcess
 	for i := range sleepers {
 		sleepers[i] = mustStartSleeper(t, socket)
 	}
 
-	// 3. Wait for them all to finish.
-	for _, sleeper := range sleepers {
-		sleeper.Wait()
+	// 3. Wait for them all to finish and collect the intervals during which the
+	// user programs, rather than the perflock clients, were executing.
+	intervals := make([]programInterval, len(sleepers))
+	for i, sleeper := range sleepers {
+		intervals[i] = mustWaitForProgram(t, sleeper)
 	}
 
-	// Assert that they ran sequentially by making sure it took longer than
-	// sleep_time*num_sleepers.
-	if got, want := time.Since(start), time.Duration(len(sleepers))*sleepDuration; got < want {
-		t.Errorf("expected %d sleepers each sleeping %v to run sequentially, but time passed is %v",
-			len(sleepers), sleepDuration, got)
+	// No two exclusive user programs may overlap.
+	for i, a := range intervals {
+		for j, b := range intervals[:i] {
+			if a.overlaps(b) {
+				t.Errorf("exclusive programs %d and %d overlapped: %v and %v", i, j, a, b)
+			}
+		}
 	}
 }
 
@@ -119,22 +124,31 @@ func TestShared(t *testing.T) {
 	// 1. Start a daemon.
 	mustStartDaemon(t, socket)
 
-	// 2. Start three sleepers in SHARED mode, each sleeping for 0.5s.
-	start := time.Now()
-	var sleepers [3]*exec.Cmd
+	// 2. Start three sleepers in SHARED mode.
+	var sleepers [3]*testProcess
 	for i := range sleepers {
 		sleepers[i] = mustStartSleeper(t, socket, "-shared")
 	}
 
-	for _, sleeper := range sleepers {
-		sleeper.Wait()
+	intervals := make([]programInterval, len(sleepers))
+	for i, sleeper := range sleepers {
+		intervals[i] = mustWaitForProgram(t, sleeper)
 	}
 
-	// Assert that they ran concurrently by making sure it was shorter than than
-	// sleep_time*num_sleepers.
-	if got, maxTime := time.Since(start), time.Duration(len(sleepers))*sleepDuration; got > maxTime {
-		t.Errorf("expected %d shared sleepers each sleeping %v to not take as long as them sleeping sequentially, but time passed is %v",
-			len(sleepers), sleepDuration, got)
+	// All shared user programs must have executed concurrently. Comparing their
+	// child-reported intervals avoids counting process startup, which is much
+	// slower under the race detector.
+	latestStart, earliestEnd := intervals[0].start, intervals[0].end
+	for _, interval := range intervals[1:] {
+		if interval.start.After(latestStart) {
+			latestStart = interval.start
+		}
+		if interval.end.Before(earliestEnd) {
+			earliestEnd = interval.end
+		}
+	}
+	if !latestStart.Before(earliestEnd) {
+		t.Errorf("shared programs did not all overlap: %v", intervals)
 	}
 }
 
@@ -148,27 +162,110 @@ func funcname(skip int) string {
 	return fr.Func.Name()
 }
 
+const darwinUnixSocketPathMax = 103
+
 // socketName returns a unique socket name per test.
 func socketName(t *testing.T) string {
+	t.Helper()
+
 	if runtime.GOOS == "linux" {
 		// Abstract sockets are automatically cleaned up when the process that
 		// created it (the daemon) exits. Avoids potential complications with the
 		// filesystem (read-only fs, ...) and leftovers from ctrl-c'ing the test
 		// prematurely.
 		return fmt.Sprintf("@perflock.%d.%s", os.Getpid(), funcname(2))
-	} else {
-		return filepath.Join(t.TempDir(), "perflock.socket")
+	}
+
+	base := os.TempDir()
+	if runtime.GOOS == "darwin" {
+		// Darwin limits UNIX socket paths to 103 bytes. The standard macOS
+		// temporary directory leaves little headroom, and CI wrappers often make
+		// it longer, so create test sockets below the short /tmp alias.
+		base = "/tmp"
+	}
+	dir, err := os.MkdirTemp(base, "perflock-test-")
+	if err != nil {
+		t.Fatalf("create socket directory: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	path := filepath.Join(dir, "perflock.socket")
+	if runtime.GOOS == "darwin" && len(path) > darwinUnixSocketPathMax {
+		t.Fatalf("UNIX socket path is %d bytes; Darwin permits at most %d: %q", len(path), darwinUnixSocketPathMax, path)
+	}
+	return path
+}
+
+const programEventPrefix = "PERFLOCK_TEST_EVENT "
+
+type programInterval struct {
+	start time.Time
+	end   time.Time
+}
+
+func (i programInterval) overlaps(other programInterval) bool {
+	return i.start.Before(other.end) && other.start.Before(i.end)
+}
+
+type testProcess struct {
+	cmd      *exec.Cmd
+	cancel   context.CancelFunc
+	scanDone chan struct{}
+
+	waitOnce sync.Once
+	waitErr  error
+	interval programInterval
+}
+
+func (p *testProcess) Wait() error {
+	p.waitOnce.Do(func() {
+		p.waitErr = p.cmd.Wait()
+		<-p.scanDone
+	})
+	return p.waitErr
+}
+
+func (p *testProcess) recordOutput(line string) {
+	if !strings.HasPrefix(line, programEventPrefix) {
+		return
+	}
+	fields := strings.Fields(strings.TrimPrefix(line, programEventPrefix))
+	if len(fields) != 2 {
+		return
+	}
+	nanos, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		return
+	}
+	when := time.Unix(0, nanos)
+	switch fields[0] {
+	case "start":
+		p.interval.start = when
+	case "end":
+		p.interval.end = when
 	}
 }
 
 // mustStartSleeper starts a perflock client running a sleeper.
-func mustStartSleeper(t *testing.T, socket string, argv ...string) *exec.Cmd {
+func mustStartSleeper(t *testing.T, socket string, argv ...string) *testProcess {
 	t.Helper()
 	cmd, err := startProcess(t, append(argv, "-socket="+socket, os.Args[0]), []string{"GO_TEST_MODE=perflock", "GO_TEST_PROGRAM_MODE=sleeper"})
 	if err != nil {
 		t.Fatalf("could not start sleeper: %v", err)
 	}
 	return cmd
+}
+
+func mustWaitForProgram(t *testing.T, process *testProcess) programInterval {
+	t.Helper()
+	if err := process.Wait(); err != nil {
+		t.Fatalf("program exited with error: %v", err)
+	}
+	interval := process.interval
+	if interval.start.IsZero() || interval.end.IsZero() || interval.end.Before(interval.start) {
+		t.Fatalf("program reported an invalid execution interval: %v", interval)
+	}
+	return interval
 }
 
 // mustStartDaemon starts a perflock daemon and wait for it to start listening on
@@ -191,39 +288,48 @@ func mustStartDaemon(t *testing.T, socket string) {
 	}
 }
 
-func startProcess(t *testing.T, argv []string, env []string) (*exec.Cmd, error) {
-	ctx := context.Background()
-	ctx, cancel := context.WithCancel(ctx)
+func startProcess(t *testing.T, argv []string, env []string) (*testProcess, error) {
+	ctx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(ctx, os.Args[0], argv...)
 	cmd.WaitDelay = 5 * time.Second // Ensure cleanup if the process refuses to exit after being signaled by cancelling the context.
-	cmdReader, _ := cmd.StdoutPipe()
-	scanner := bufio.NewScanner(cmdReader)
-	var pid int
-	go func() {
-		envs := strings.Join(env, " ")
-		for scanner.Scan() {
-			t.Logf("[%12d] %-25s %s\n", pid, envs, scanner.Text())
-		}
-	}()
-
-	cmd.Stderr = cmd.Stdout
-	cmd.Env = os.Environ()
-	cmd.Env = append(cmd.Env, env...)
-	if err := cmd.Start(); err != nil {
+	cmdReader, err := cmd.StdoutPipe()
+	if err != nil {
 		cancel()
 		return nil, err
 	}
-	pid = cmd.Process.Pid
-	t.Cleanup(func() {
+	cmd.Stderr = cmd.Stdout
+	cmd.Env = append(os.Environ(), env...)
+	if err := cmd.Start(); err != nil {
 		cancel()
-		if err := cmd.Wait(); err != nil {
-			t.Logf("%s %s exited with error: %v", strings.Join(env, " "), os.Args[0], err)
+		cmdReader.Close()
+		return nil, err
+	}
+
+	process := &testProcess{cmd: cmd, cancel: cancel, scanDone: make(chan struct{})}
+	pid := cmd.Process.Pid
+	envs := strings.Join(env, " ")
+	go func() {
+		defer close(process.scanDone)
+		scanner := bufio.NewScanner(cmdReader)
+		for scanner.Scan() {
+			line := scanner.Text()
+			process.recordOutput(line)
+			t.Logf("[%12d] %-25s %s\n", pid, envs, line)
+		}
+	}()
+
+	t.Cleanup(func() {
+		process.cancel()
+		if err := process.Wait(); err != nil {
+			t.Logf("%s %s exited with error: %v", envs, os.Args[0], err)
 		}
 	})
-	return cmd, nil
+	return process, nil
 }
 
 func sleeper() {
+	fmt.Printf("%sstart %d\n", programEventPrefix, time.Now().UnixNano())
 	log.Printf("GOMAXPROCS=%d\n", runtime.GOMAXPROCS(0))
 	time.Sleep(sleepDuration)
+	fmt.Printf("%send %d\n", programEventPrefix, time.Now().UnixNano())
 }
