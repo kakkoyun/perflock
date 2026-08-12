@@ -41,7 +41,13 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/aclements/perflock/internal/perfctl"
 )
+
+type governorSetter interface {
+	SetGovernor(percent int) error
+}
 
 func main() {
 	flag.Usage = func() {
@@ -57,7 +63,7 @@ func main() {
 	flagList := flag.Bool("list", false, "print current and pending commands")
 	flagSocket := flag.String("socket", "/var/run/perflock.socket", "connect to socket `path`")
 	flagShared := flag.Bool("shared", false, "acquire lock in shared mode (default: exclusive mode)")
-	flagGovernor := &governorFlag{percent: 90}
+	flagGovernor := newGovernorFlag()
 	flag.Var(flagGovernor, "governor", "set CPU frequency to `percent` between the min and max\n\twhile running command, or \"none\" for no adjustment")
 	flag.Parse()
 
@@ -99,15 +105,41 @@ func main() {
 		}
 		c.Acquire(*flagShared, false, shellEscapeList(cmd))
 	}
-	if !*flagShared && flagGovernor.percent >= 0 {
-		c.SetGovernor(flagGovernor.percent)
+	warning, err := applyGovernor(c, *flagShared, flagGovernor)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if warning != nil {
+		log.Print("warning: ", warning)
 	}
 	ignoreSignals()
 	run(cmd)
 }
 
 type governorFlag struct {
-	percent int
+	percent  int
+	explicit bool
+}
+
+func applyGovernor(client governorSetter, shared bool, setting *governorFlag) (warning, fatal error) {
+	if shared || setting.percent < 0 {
+		return nil, nil
+	}
+	if err := client.SetGovernor(setting.percent); err != nil {
+		if setting.explicit {
+			return nil, fmt.Errorf("setting CPU governor: %w", err)
+		}
+		return fmt.Errorf("unable to set CPU governor: %w", err), nil
+	}
+	return nil, nil
+}
+
+func newGovernorFlag() *governorFlag {
+	percent := -1
+	if perfctl.SupportsPinning {
+		percent = 90
+	}
+	return &governorFlag{percent: percent}
 }
 
 func (f *governorFlag) String() string {
@@ -125,8 +157,16 @@ func (f *governorFlag) Set(v string) error {
 		if m == nil {
 			return fmt.Errorf("governor must be \"none\" or \"N%%\"")
 		}
-		f.percent, _ = strconv.Atoi(m[1])
+		percent, err := strconv.Atoi(m[1])
+		if err != nil {
+			return fmt.Errorf("invalid governor percentage %q: %w", m[1], err)
+		}
+		if percent > 100 {
+			return fmt.Errorf("governor must be between 0%% and 100%%")
+		}
+		f.percent = percent
 	}
+	f.explicit = true
 	return nil
 }
 
