@@ -41,6 +41,112 @@ const (
 // names (starting with @) for the UNIX domain socket to listen on. We don't
 // bother skipping for non-Linux, as that will hopefully make it clear what
 // should be fixed to those who are interested.
+type fakeGovernorSetter struct {
+	percents []int
+	err      error
+}
+
+func (f *fakeGovernorSetter) SetGovernor(percent int) error {
+	f.percents = append(f.percents, percent)
+	return f.err
+}
+
+func TestApplyGovernor(t *testing.T) {
+	requestErr := fmt.Errorf("pin failed")
+	for _, test := range []struct {
+		name        string
+		shared      bool
+		setting     governorFlag
+		requestErr  error
+		wantCalls   []int
+		wantWarning string
+		wantFatal   string
+	}{
+		{name: "disabled", setting: governorFlag{percent: -1}},
+		{name: "shared", shared: true, setting: governorFlag{percent: 90}},
+		{name: "success", setting: governorFlag{percent: 90}, wantCalls: []int{90}},
+		{
+			name:        "implicit failure warns",
+			setting:     governorFlag{percent: 90},
+			requestErr:  requestErr,
+			wantCalls:   []int{90},
+			wantWarning: "unable to set CPU governor: pin failed",
+		},
+		{
+			name:       "explicit failure is fatal",
+			setting:    governorFlag{percent: 75, explicit: true},
+			requestErr: requestErr,
+			wantCalls:  []int{75},
+			wantFatal:  "setting CPU governor: pin failed",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			setter := &fakeGovernorSetter{err: test.requestErr}
+			warning, fatal := applyGovernor(setter, test.shared, &test.setting)
+			if got := errorText(warning); got != test.wantWarning {
+				t.Fatalf("warning = %q, want %q", got, test.wantWarning)
+			}
+			if got := errorText(fatal); got != test.wantFatal {
+				t.Fatalf("fatal = %q, want %q", got, test.wantFatal)
+			}
+			if fmt.Sprint(setter.percents) != fmt.Sprint(test.wantCalls) {
+				t.Fatalf("SetGovernor calls = %v, want %v", setter.percents, test.wantCalls)
+			}
+		})
+	}
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func TestServerGovernorLifecycle(t *testing.T) {
+	controller := &fakePerformanceController{}
+	server := &Server{
+		openPerformanceController: func() (perfctl.Controller, error) {
+			return controller, nil
+		},
+	}
+	if err := server.setGovernor(-1); err == nil {
+		t.Fatal("negative governor percentage succeeded")
+	}
+	if controller.pinCalls != 0 {
+		t.Fatalf("invalid request opened controller %d times", controller.pinCalls)
+	}
+
+	if err := server.setGovernor(60); err != nil {
+		t.Fatalf("setGovernor: %v", err)
+	}
+	if controller.percent != 60 || server.restoreGovernor == nil {
+		t.Fatalf("controller = {%d %v}, want {60 restore}", controller.percent, server.restoreGovernor != nil)
+	}
+	server.drop()
+	if controller.restoreCalls != 1 {
+		t.Fatalf("restore called %d times, want 1", controller.restoreCalls)
+	}
+	if server.restoreGovernor != nil {
+		t.Fatal("drop retained restore function")
+	}
+}
+
+type fakePerformanceController struct {
+	pinCalls     int
+	percent      int
+	restoreCalls int
+}
+
+func (f *fakePerformanceController) Pin(percent int) (func() error, error) {
+	f.pinCalls++
+	f.percent = percent
+	return func() error {
+		f.restoreCalls++
+		return nil
+	}, nil
+}
+
 func TestGovernorFlag(t *testing.T) {
 	flag := newGovernorFlag()
 	if perfctl.SupportsPinning {
