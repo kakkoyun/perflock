@@ -14,11 +14,22 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 func windowsTestAddress(t *testing.T) string {
 	t.Helper()
 	return fmt.Sprintf(`\\.\pipe\perflock-test-%d-%d`, os.Getpid(), time.Now().UnixNano())
+}
+
+func TestClientAccessCannotCreatePipeInstances(t *testing.T) {
+	if pipeClientAccess&windows.FILE_APPEND_DATA != 0 {
+		t.Fatal("client access includes FILE_CREATE_PIPE_INSTANCE")
+	}
+	if pipeClientAccess&windows.FILE_READ_DATA == 0 || pipeClientAccess&windows.FILE_WRITE_DATA == 0 {
+		t.Fatal("client access does not include pipe data read/write")
+	}
 }
 
 func TestListenRefusesLivePipe(t *testing.T) {
