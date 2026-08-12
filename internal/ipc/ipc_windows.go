@@ -7,6 +7,7 @@
 package ipc
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -20,9 +21,13 @@ import (
 // DefaultAddr is the system-wide perflock named pipe.
 const DefaultAddr = `\\.\pipe\perflock`
 
-// Authenticated users may read and write. LocalSystem and administrators have
-// full access. The pipe rejects remote clients independently of this ACL.
-const pipeSecurityDescriptor = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)"
+const (
+	// Authenticated users may read and write data but cannot create server pipe
+	// instances. LocalSystem and administrators have full access. The pipe also
+	// rejects remote clients independently of this ACL.
+	pipeSecurityDescriptor = "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x12019b;;;AU)"
+	pipeClientAccess       = (windows.FILE_GENERIC_READ | windows.FILE_GENERIC_WRITE) &^ windows.FILE_APPEND_DATA
+)
 
 // Listen creates a local named-pipe listener. go-winio atomically creates the
 // first pipe instance, so a second daemon cannot replace a live one.
@@ -43,8 +48,9 @@ func Listen(addr string) (net.Listener, error) {
 
 // Dial connects to a perflock daemon.
 func Dial(addr string) (net.Conn, error) {
-	timeout := 2 * time.Second
-	return winio.DialPipe(addr, &timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	return winio.DialPipeAccess(ctx, addr, uint32(pipeClientAccess))
 }
 
 // PeerUser returns the operating-system username of the connected peer.
