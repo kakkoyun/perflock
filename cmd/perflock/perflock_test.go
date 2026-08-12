@@ -249,7 +249,8 @@ func (p *testProcess) recordOutput(line string) {
 // mustStartSleeper starts a perflock client running a sleeper.
 func mustStartSleeper(t *testing.T, socket string, argv ...string) *testProcess {
 	t.Helper()
-	cmd, err := startProcess(t, append(argv, "-socket="+socket, os.Args[0]), []string{"GO_TEST_MODE=perflock", "GO_TEST_PROGRAM_MODE=sleeper"})
+	args := append([]string{"-governor=none"}, argv...)
+	cmd, err := startProcess(t, append(args, "-socket="+socket, os.Args[0]), []string{"GO_TEST_MODE=perflock", "GO_TEST_PROGRAM_MODE=sleeper"})
 	if err != nil {
 		t.Fatalf("could not start sleeper: %v", err)
 	}
