@@ -148,6 +148,10 @@ func (s *Server) Serve() {
 					log.Printf("protocol error: setting power mode without exclusive lock")
 					return
 				}
+				if s.restorePowerMode != nil {
+					log.Printf("protocol error: setting power mode twice")
+					return
+				}
 				mode := powermode.Mode(action.Mode)
 				if err := gw.Encode(errorString(s.setPowerMode(mode))); err != nil {
 					log.Print(err)
