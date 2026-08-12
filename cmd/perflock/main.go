@@ -63,7 +63,9 @@ func main() {
 	flagGovernor := newGovernorFlag()
 	flag.Var(flagGovernor, "governor", "set CPU frequency to `percent` between the min and max\n\twhile running command, or \"none\" for no adjustment")
 	flagPowerMode := &powerModeFlag{mode: powermode.Automatic}
-	flag.Var(flagPowerMode, "power-mode", "set macOS system power mode to `auto`, `low`, or `high` while running command")
+	if powermode.Supported {
+		flag.Var(flagPowerMode, "power-mode", "set macOS system power mode to `auto`, `low`, or `high` while running command")
+	}
 	flag.Parse()
 
 	if *flagDaemon {
@@ -102,6 +104,13 @@ func main() {
 		flag.Usage()
 		os.Exit(2)
 	}
+	for _, message := range powermode.Inspect() {
+		prefix := "info: "
+		if message.Warning {
+			prefix = "warning: "
+		}
+		log.Print(prefix, message.Text)
+	}
 	c := NewClient(*flagSocket)
 	if !c.Acquire(*flagShared, true, shellEscapeList(cmd)) {
 		list := c.List()
@@ -126,13 +135,6 @@ func main() {
 		if err := c.SetPowerMode(int(flagPowerMode.mode)); err != nil {
 			log.Fatal("setting power mode: ", err)
 		}
-	}
-	for _, message := range powermode.Inspect() {
-		prefix := "info: "
-		if message.Warning {
-			prefix = "warning: "
-		}
-		log.Print(prefix, message.Text)
 	}
 	ignoreSignals()
 	run(cmd)

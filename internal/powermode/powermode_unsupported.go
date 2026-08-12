@@ -6,6 +6,9 @@
 
 package powermode
 
+// Supported reports whether this platform exposes macOS power modes.
+const Supported = false
+
 // Open opens the host power-mode controls.
 func Open() (Controller, error) {
 	return nil, ErrUnsupported
