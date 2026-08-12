@@ -56,15 +56,16 @@ type systemPowerAPI struct{}
 
 // Open opens the active Windows power scheme.
 func Open() (Controller, error) {
-	var schemePointer *windows.GUID
+	var schemePointer unsafe.Pointer
 	if err := powerCall("get active power scheme", procPowerGetActiveScheme, 0, uintptr(unsafe.Pointer(&schemePointer))); err != nil {
 		return nil, err
 	}
 	if schemePointer == nil {
 		return nil, fmt.Errorf("get active power scheme: returned a nil scheme")
 	}
-	defer windows.LocalFree(windows.Handle(unsafe.Pointer(schemePointer)))
-	return &windowsController{scheme: *schemePointer, api: systemPowerAPI{}}, nil
+	defer windows.LocalFree(windows.Handle(schemePointer))
+	scheme := *(*windows.GUID)(schemePointer)
+	return &windowsController{scheme: scheme, api: systemPowerAPI{}}, nil
 }
 
 func (c *windowsController) Pin(percent int) (func() error, error) {
