@@ -153,12 +153,8 @@ func (s *Server) Serve() {
 				}
 
 			case ActionSetGovernor:
-				if s.locker == nil || s.locker.shared {
-					log.Printf("protocol error: setting governor without exclusive lock")
-					return
-				}
-				if s.restoreGovernor != nil {
-					log.Printf("protocol error: setting governor twice")
+				if err := s.validateGovernorRequest(); err != nil {
+					log.Printf("protocol error: %v", err)
 					return
 				}
 				err := s.setGovernor(action.Percent)
@@ -200,6 +196,16 @@ func (s *Server) drop() {
 		theLock.Dequeue(s.locker)
 		s.locker = nil
 	}
+}
+
+func (s *Server) validateGovernorRequest() error {
+	if s.locker == nil || s.locker.shared {
+		return fmt.Errorf("setting governor without exclusive lock")
+	}
+	if s.restoreGovernor != nil {
+		return fmt.Errorf("setting governor twice")
+	}
+	return nil
 }
 
 func (s *Server) setGovernor(percent int) error {
