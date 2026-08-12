@@ -38,11 +38,24 @@ func TestListenRefusesLivePipe(t *testing.T) {
 		t.Fatalf("second listener error = %v, want %v", err, ErrAlreadyRunning)
 	}
 
+	accepted := make(chan error, 1)
+	go func() {
+		conn, err := first.Accept()
+		if err == nil {
+			err = conn.Close()
+		}
+		accepted <- err
+	}()
 	conn, err := Dial(addr)
 	if err != nil {
 		t.Fatalf("first listener stopped serving: %v", err)
 	}
-	conn.Close()
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-accepted; err != nil {
+		t.Fatalf("first listener failed to accept: %v", err)
+	}
 }
 
 func TestPeerUserWindows(t *testing.T) {
