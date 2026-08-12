@@ -47,6 +47,10 @@ import (
 	"github.com/aclements/perflock/internal/powermode"
 )
 
+type governorSetter interface {
+	SetGovernor(percent int) error
+}
+
 func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
@@ -114,13 +118,12 @@ func main() {
 		}
 		c.Acquire(*flagShared, false, shellEscapeList(cmd))
 	}
-	if !*flagShared && flagGovernor.percent >= 0 {
-		if err := c.SetGovernor(flagGovernor.percent); err != nil {
-			if flagGovernor.explicit {
-				log.Fatal("setting CPU governor: ", err)
-			}
-			log.Print("warning: unable to set CPU governor: ", err)
-		}
+	warning, err := applyGovernor(c, *flagShared, flagGovernor)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if warning != nil {
+		log.Print("warning: ", warning)
 	}
 	if flagPowerMode.explicit {
 		if *flagShared {
@@ -137,6 +140,19 @@ func main() {
 type governorFlag struct {
 	percent  int
 	explicit bool
+}
+
+func applyGovernor(client governorSetter, shared bool, setting *governorFlag) (warning, fatal error) {
+	if shared || setting.percent < 0 {
+		return nil, nil
+	}
+	if err := client.SetGovernor(setting.percent); err != nil {
+		if setting.explicit {
+			return nil, fmt.Errorf("setting CPU governor: %w", err)
+		}
+		return fmt.Errorf("unable to set CPU governor: %w", err), nil
+	}
+	return nil, nil
 }
 
 func newGovernorFlag() *governorFlag {
