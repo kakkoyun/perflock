@@ -92,20 +92,37 @@ install_macos() {
   launchctl bootstrap system "${LAUNCHD_PLIST}"
 }
 
+install_for_platform() {
+  case "$1" in
+  Linux)
+    install_linux
+    ;;
+  Darwin)
+    install_macos
+    ;;
+  MINGW* | MSYS* | CYGWIN*)
+    die "Use init/windows/install.ps1 from an elevated PowerShell."
+    ;;
+  *)
+    die "Unsupported operating system: $1"
+    ;;
+  esac
+}
+
 main() {
   if [[ $# -gt 0 ]]; then
     case "$1" in
-      -h | --help)
-        usage
-        return
-        ;;
-      --)
-        shift
-        ;;
-      *)
-        usage >&2
-        die "Unknown argument: $1"
-        ;;
+    -h | --help)
+      usage
+      return
+      ;;
+    --)
+      shift
+      ;;
+    *)
+      usage >&2
+      die "Unknown argument: $1"
+      ;;
     esac
   fi
   [[ $# -eq 0 ]] || die "This installer does not accept positional arguments."
@@ -113,20 +130,7 @@ main() {
   check_root
   check_binary
 
-  case "$(uname -s)" in
-    Linux)
-      install_linux
-      ;;
-    Darwin)
-      install_macos
-      ;;
-    MINGW* | MSYS* | CYGWIN*)
-      die "Use init/windows/install.ps1 from an elevated PowerShell."
-      ;;
-    *)
-      die "Unsupported operating system: $(uname -s)"
-      ;;
-  esac
+  install_for_platform "$(uname -s)"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

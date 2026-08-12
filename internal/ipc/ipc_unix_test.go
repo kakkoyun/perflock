@@ -111,6 +111,9 @@ func TestValidateUnixAddress(t *testing.T) {
 	default:
 		t.Skip("platform limit is not defined")
 	}
+	if err := validateUnixAddress(strings.Repeat("x", max-1)); err != nil {
+		t.Fatalf("path below limit failed: %v", err)
+	}
 	if err := validateUnixAddress(strings.Repeat("x", max)); err != nil {
 		t.Fatalf("path at limit failed: %v", err)
 	}

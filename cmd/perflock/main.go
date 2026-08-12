@@ -46,6 +46,14 @@ import (
 	"github.com/aclements/perflock/internal/powermode"
 )
 
+type governorSetter interface {
+	SetGovernor(percent int) error
+}
+
+type powerModeSetter interface {
+	SetPowerMode(mode int) error
+}
+
 func main() {
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage of %s:\n", os.Args[0])
@@ -120,21 +128,15 @@ func main() {
 		}
 		c.Acquire(*flagShared, false, shellEscapeList(cmd))
 	}
-	if !*flagShared && flagGovernor.percent >= 0 {
-		if err := c.SetGovernor(flagGovernor.percent); err != nil {
-			if flagGovernor.explicit {
-				log.Fatal("setting CPU governor: ", err)
-			}
-			log.Print("warning: unable to set CPU governor: ", err)
-		}
+	warning, err := applyGovernor(c, *flagShared, flagGovernor)
+	if err != nil {
+		log.Fatal(err)
 	}
-	if flagPowerMode.explicit {
-		if *flagShared {
-			log.Fatal("-power-mode requires an exclusive lock")
-		}
-		if err := c.SetPowerMode(int(flagPowerMode.mode)); err != nil {
-			log.Fatal("setting power mode: ", err)
-		}
+	if warning != nil {
+		log.Print("warning: ", warning)
+	}
+	if err := applyPowerMode(c, *flagShared, flagPowerMode); err != nil {
+		log.Fatal(err)
 	}
 	ignoreSignals()
 	run(cmd)
@@ -143,6 +145,32 @@ func main() {
 type governorFlag struct {
 	percent  int
 	explicit bool
+}
+
+func applyPowerMode(client powerModeSetter, shared bool, setting *powerModeFlag) error {
+	if !setting.explicit {
+		return nil
+	}
+	if shared {
+		return fmt.Errorf("-power-mode requires an exclusive lock")
+	}
+	if err := client.SetPowerMode(int(setting.mode)); err != nil {
+		return fmt.Errorf("setting power mode: %w", err)
+	}
+	return nil
+}
+
+func applyGovernor(client governorSetter, shared bool, setting *governorFlag) (warning, fatal error) {
+	if shared || setting.percent < 0 {
+		return nil, nil
+	}
+	if err := client.SetGovernor(setting.percent); err != nil {
+		if setting.explicit {
+			return nil, fmt.Errorf("setting CPU governor: %w", err)
+		}
+		return fmt.Errorf("unable to set CPU governor: %w", err), nil
+	}
+	return nil, nil
 }
 
 func newGovernorFlag() *governorFlag {
