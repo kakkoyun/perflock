@@ -49,3 +49,31 @@ jobs:
 
       - name: Test
         run: go test -race -count=1 ./...
+
+      - name: Check Bash installer syntax on Linux
+        if: runner.os == 'Linux'
+        run: bash -n install.bash
+
+      - name: Check Bash installer syntax on macOS
+        if: runner.os == 'macOS'
+        run: bash -n install.bash
+
+      - name: Check launchd property list
+        if: runner.os == 'macOS'
+        run: plutil -lint init/launchd/com.github.aclements.perflock.plist
+
+      - name: Check PowerShell installer syntax
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path init/windows/install.ps1),
+            [ref]$tokens,
+            [ref]$errors
+          ) | Out-Null
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
