@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/aclements/perflock/internal/perfctl"
 )
 
 const (
@@ -39,6 +41,31 @@ const (
 // names (starting with @) for the UNIX domain socket to listen on. We don't
 // bother skipping for non-Linux, as that will hopefully make it clear what
 // should be fixed to those who are interested.
+func TestGovernorFlag(t *testing.T) {
+	flag := newGovernorFlag()
+	if perfctl.SupportsPinning {
+		if flag.percent != 90 {
+			t.Fatalf("default governor = %d%%, want 90%%", flag.percent)
+		}
+	} else if flag.percent != -1 {
+		t.Fatalf("default governor = %d%%, want none", flag.percent)
+	}
+	if flag.explicit {
+		t.Fatal("default governor must not be marked explicit")
+	}
+
+	if err := flag.Set("75%"); err != nil {
+		t.Fatalf("set governor: %v", err)
+	}
+	if flag.percent != 75 || !flag.explicit {
+		t.Fatalf("explicit governor = {%d %v}, want {75 true}", flag.percent, flag.explicit)
+	}
+
+	if err := flag.Set("101%"); err == nil {
+		t.Fatal("governor above 100% succeeded")
+	}
+}
+
 func TestMain(m *testing.M) {
 	switch os.Getenv("GO_TEST_MODE") {
 	case "": // Run tests (top-level).

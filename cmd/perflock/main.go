@@ -41,6 +41,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/aclements/perflock/internal/perfctl"
 )
 
 func main() {
@@ -57,7 +59,7 @@ func main() {
 	flagList := flag.Bool("list", false, "print current and pending commands")
 	flagSocket := flag.String("socket", "/var/run/perflock.socket", "connect to socket `path`")
 	flagShared := flag.Bool("shared", false, "acquire lock in shared mode (default: exclusive mode)")
-	flagGovernor := &governorFlag{percent: 90}
+	flagGovernor := newGovernorFlag()
 	flag.Var(flagGovernor, "governor", "set CPU frequency to `percent` between the min and max\n\twhile running command, or \"none\" for no adjustment")
 	flag.Parse()
 
@@ -100,14 +102,28 @@ func main() {
 		c.Acquire(*flagShared, false, shellEscapeList(cmd))
 	}
 	if !*flagShared && flagGovernor.percent >= 0 {
-		c.SetGovernor(flagGovernor.percent)
+		if err := c.SetGovernor(flagGovernor.percent); err != nil {
+			if flagGovernor.explicit {
+				log.Fatal("setting CPU governor: ", err)
+			}
+			log.Print("warning: unable to set CPU governor: ", err)
+		}
 	}
 	ignoreSignals()
 	run(cmd)
 }
 
 type governorFlag struct {
-	percent int
+	percent  int
+	explicit bool
+}
+
+func newGovernorFlag() *governorFlag {
+	percent := -1
+	if perfctl.SupportsPinning {
+		percent = 90
+	}
+	return &governorFlag{percent: percent}
 }
 
 func (f *governorFlag) String() string {
@@ -125,8 +141,13 @@ func (f *governorFlag) Set(v string) error {
 		if m == nil {
 			return fmt.Errorf("governor must be \"none\" or \"N%%\"")
 		}
-		f.percent, _ = strconv.Atoi(m[1])
+		percent, _ := strconv.Atoi(m[1])
+		if percent > 100 {
+			return fmt.Errorf("governor must be between 0%% and 100%%")
+		}
+		f.percent = percent
 	}
+	f.explicit = true
 	return nil
 }
 

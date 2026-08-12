@@ -15,7 +15,7 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/aclements/perflock/internal/cpupower"
+	"github.com/aclements/perflock/internal/perfctl"
 	"inet.af/peercred"
 )
 
@@ -63,7 +63,7 @@ type Server struct {
 	locker    *Locker
 	acquiring bool
 
-	oldGovernors []*governorSettings
+	restoreGovernor func() error
 }
 
 func NewServer(c net.Conn) *Server {
@@ -184,9 +184,11 @@ func (s *Server) Serve() {
 
 func (s *Server) drop() {
 	// Restore the CPU governor before releasing the lock.
-	if s.oldGovernors != nil {
-		s.restoreGovernor()
-		s.oldGovernors = nil
+	if s.restoreGovernor != nil {
+		if err := s.restoreGovernor(); err != nil {
+			log.Print(err)
+		}
+		s.restoreGovernor = nil
 	}
 	// Release the lock.
 	if s.locker != nil {
@@ -195,70 +197,15 @@ func (s *Server) drop() {
 	}
 }
 
-type governorSettings struct {
-	domain   *cpupower.Domain
-	min, max int
-}
-
 func (s *Server) setGovernor(percent int) error {
-	domains, err := cpupower.Domains()
+	controller, err := perfctl.Open()
 	if err != nil {
 		return err
 	}
-	if len(domains) == 0 {
-		return fmt.Errorf("no power domains")
+	restore, err := controller.Pin(percent)
+	if err != nil {
+		return err
 	}
-
-	// Save current frequency settings.
-	old := []*governorSettings{}
-	for _, d := range domains {
-		min, max, err := d.CurrentRange()
-		if err != nil {
-			return err
-		}
-		old = append(old, &governorSettings{d, min, max})
-	}
-	s.oldGovernors = old
-
-	// Set new settings.
-	abs := func(x int) int {
-		if x < 0 {
-			return -x
-		}
-		return x
-	}
-	for _, d := range domains {
-		min, max, avail := d.AvailableRange()
-		target := (max-min)*percent/100 + min
-
-		// Find the nearest available frequency.
-		if len(avail) != 0 {
-			closest := avail[0]
-			for _, a := range avail {
-				if abs(target-a) < abs(target-closest) {
-					closest = a
-				}
-			}
-			target = closest
-		}
-
-		err := d.SetRange(target, target)
-		if err != nil {
-			return err
-		}
-	}
-
+	s.restoreGovernor = restore
 	return nil
-}
-
-func (s *Server) restoreGovernor() error {
-	var err error
-	for _, g := range s.oldGovernors {
-		// Try to set all of the domains, even if one fails.
-		err1 := g.domain.SetRange(g.min, g.max)
-		if err1 != nil && err == nil {
-			err = err1
-		}
-	}
-	return err
 }
