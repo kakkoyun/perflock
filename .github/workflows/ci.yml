@@ -47,8 +47,24 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: Test
-        run: go test -race -count=1 ./...
+      - name: Test and report coverage
+        shell: bash
+        run: |
+          go test -race -count=1 -covermode=atomic \
+            -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out
+
+      - name: Test with a long macOS temporary path
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          long_tmp="/tmp/$(printf 'x%.0s' {1..120})"
+          if (( ${#long_tmp} <= 103 )); then
+            echo "test TMPDIR must exceed Darwin's UNIX socket path limit" >&2
+            exit 1
+          fi
+          mkdir -p "$long_tmp"
+          TMPDIR="$long_tmp" go test -race -count=1 ./cmd/perflock
 
       - name: Check Bash installer syntax on Linux
         if: runner.os == 'Linux'
