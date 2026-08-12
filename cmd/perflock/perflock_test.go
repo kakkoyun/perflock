@@ -350,10 +350,32 @@ func TestGovernorFlag(t *testing.T) {
 	}
 }
 
+func TestRunPreservesChildExitCode(t *testing.T) {
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), "GO_TEST_MODE=run-parent-exit")
+	err := cmd.Run()
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("run helper error = %T %v, want ExitError", err, err)
+	}
+	if exitCode := exitErr.ExitCode(); exitCode != 23 {
+		t.Fatalf("perflock exit code = %d, want child exit code 23", exitCode)
+	}
+}
+
 func TestMain(m *testing.M) {
 	switch os.Getenv("GO_TEST_MODE") {
 	case "": // Run tests (top-level).
 		os.Exit(m.Run())
+
+	case "run-parent-exit":
+		if err := os.Setenv("GO_TEST_MODE", "run-child-exit"); err != nil {
+			log.Fatal(err)
+		}
+		run([]string{os.Args[0]})
+
+	case "run-child-exit":
+		os.Exit(23)
 
 	case "perflock": // Act like a perflock.
 		// If GO_TEST_PROGRAM_MODE is set, we're a perflock client, and main() will
