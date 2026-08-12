@@ -37,11 +37,24 @@ const (
 // The environment variables affecting this behaviour are GO_TEST_MODE and
 // GO_TEST_PROGRAM_MODE. See the comments below.
 //
-// About OS support: perflock effectively only works fully on Linux, as it uses
-// OS-specific interfaces (e.g. for the CPU governor). The tests use abstract
-// names (starting with @) for the UNIX domain socket to listen on. We don't
-// bother skipping for non-Linux, as that will hopefully make it clear what
-// should be fixed to those who are interested.
+// The tests choose a platform transport: abstract UNIX sockets on Linux,
+// short filesystem UNIX sockets on macOS and other Unix systems, and named
+// pipes on Windows.
+func TestServeListenerStopsWhenClosed(t *testing.T) {
+	listener, err := ipc.Listen(socketName(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() { result <- serveListener(listener) }()
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; err != nil {
+		t.Fatalf("serveListener returned %v after listener close", err)
+	}
+}
+
 type fakePowerModeSetter struct {
 	modes []int
 	err   error

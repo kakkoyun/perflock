@@ -65,3 +65,29 @@ jobs:
           fi
           mkdir -p "$long_tmp"
           TMPDIR="$long_tmp" go test -race -count=1 ./cmd/perflock
+
+      - name: Test Bash installer behavior
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash -n install.bash test/install_test.bash
+          bash test/install_test.bash
+
+      - name: Check Bash installer style
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          shellcheck install.bash test/install_test.bash
+          go run mvdan.cc/sh/v3/cmd/shfmt@v3.12.0 \
+            -d -i 2 install.bash test/install_test.bash
+
+      - name: Test launchd job semantics
+        if: runner.os == 'macOS'
+        run: |
+          plutil -lint init/launchd/com.github.aclements.perflock.plist
+          python3 test/launchd_test.py
+
+      - name: Test PowerShell installer semantics
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./init/windows/install.Tests.ps1

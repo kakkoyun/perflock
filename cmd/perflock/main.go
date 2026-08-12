@@ -82,6 +82,13 @@ func main() {
 			flag.Usage()
 			os.Exit(2)
 		}
+		handled, err := runAsService(*flagSocket)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if handled {
+			return
+		}
 		doDaemon(*flagSocket)
 		return
 	}

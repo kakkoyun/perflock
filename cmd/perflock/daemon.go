@@ -6,6 +6,7 @@ package main
 
 import (
 	"encoding/gob"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -20,17 +21,32 @@ import (
 var theLock PerfLock
 
 func doDaemon(path string) {
-	l, err := ipc.Listen(path)
-	if err != nil {
+	if err := listenAndServe(path); err != nil {
 		log.Fatal(err)
 	}
-	defer l.Close()
+}
 
-	// Receive connections.
+func listenAndServe(path string) error {
+	listener, err := newListener(path)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	return serveListener(listener)
+}
+
+func newListener(path string) (net.Listener, error) {
+	return ipc.Listen(path)
+}
+
+func serveListener(listener net.Listener) error {
 	for {
-		conn, err := l.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
-			log.Fatal(err)
+			if errors.Is(err, net.ErrClosed) {
+				return nil
+			}
+			return fmt.Errorf("accept connection: %w", err)
 		}
 
 		go func(c net.Conn) {
