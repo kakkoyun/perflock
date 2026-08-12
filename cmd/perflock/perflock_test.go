@@ -18,6 +18,7 @@ import (
 
 	"github.com/aclements/perflock/internal/ipc"
 	"github.com/aclements/perflock/internal/perfctl"
+	"github.com/aclements/perflock/internal/powermode"
 )
 
 const (
@@ -52,6 +53,273 @@ func TestServeListenerStopsWhenClosed(t *testing.T) {
 	if err := <-result; err != nil {
 		t.Fatalf("serveListener returned %v after listener close", err)
 	}
+}
+
+type fakePowerModeSetter struct {
+	modes []int
+	err   error
+}
+
+func (f *fakePowerModeSetter) SetPowerMode(mode int) error {
+	f.modes = append(f.modes, mode)
+	return f.err
+}
+
+func TestApplyPowerMode(t *testing.T) {
+	requestErr := fmt.Errorf("set failed")
+	for _, test := range []struct {
+		name       string
+		shared     bool
+		setting    powerModeFlag
+		requestErr error
+		wantCalls  []int
+		wantErr    string
+	}{
+		{name: "implicit", setting: powerModeFlag{mode: powermode.Automatic}},
+		{
+			name:    "shared rejected",
+			shared:  true,
+			setting: powerModeFlag{mode: powermode.High, explicit: true},
+			wantErr: "-power-mode requires an exclusive lock",
+		},
+		{
+			name:      "success",
+			setting:   powerModeFlag{mode: powermode.High, explicit: true},
+			wantCalls: []int{int(powermode.High)},
+		},
+		{
+			name:       "request failure",
+			setting:    powerModeFlag{mode: powermode.Low, explicit: true},
+			requestErr: requestErr,
+			wantCalls:  []int{int(powermode.Low)},
+			wantErr:    "setting power mode: set failed",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			setter := &fakePowerModeSetter{err: test.requestErr}
+			err := applyPowerMode(setter, test.shared, &test.setting)
+			if got := errorText(err); got != test.wantErr {
+				t.Fatalf("error = %q, want %q", got, test.wantErr)
+			}
+			if fmt.Sprint(setter.modes) != fmt.Sprint(test.wantCalls) {
+				t.Fatalf("SetPowerMode calls = %v, want %v", setter.modes, test.wantCalls)
+			}
+		})
+	}
+}
+
+func TestPowerModeFlag(t *testing.T) {
+	var setting powerModeFlag
+	if err := setting.Set("high"); err != nil {
+		t.Fatalf("Set: %v", err)
+	}
+	if setting.mode != powermode.High || !setting.explicit {
+		t.Fatalf("setting = {%v %v}, want {high true}", setting.mode, setting.explicit)
+	}
+	if err := setting.Set("maximum"); err == nil {
+		t.Fatal("unknown power mode succeeded")
+	}
+}
+
+func TestValidatePowerModeRequest(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		server  Server
+		wantErr string
+	}{
+		{name: "no lock", wantErr: "without exclusive lock"},
+		{name: "shared lock", server: Server{locker: &Locker{shared: true}}, wantErr: "without exclusive lock"},
+		{name: "exclusive lock", server: Server{locker: &Locker{shared: false}}},
+		{
+			name: "duplicate",
+			server: Server{
+				locker:           &Locker{shared: false},
+				restorePowerMode: func() error { return nil },
+			},
+			wantErr: "setting power mode twice",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.server.validatePowerModeRequest()
+			if test.wantErr == "" && err != nil {
+				t.Fatalf("validatePowerModeRequest: %v", err)
+			}
+			if test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+				t.Fatalf("validatePowerModeRequest error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestServerPowerModeLifecycle(t *testing.T) {
+	controller := &fakePowerModeController{}
+	server := &Server{
+		openPowerModeController: func() (powermode.Controller, error) {
+			return controller, nil
+		},
+	}
+	if err := server.setPowerMode(powermode.High); err != nil {
+		t.Fatalf("setPowerMode: %v", err)
+	}
+	if controller.mode != powermode.High || server.restorePowerMode == nil {
+		t.Fatalf("controller = {%v %v}, want {high restore}", controller.mode, server.restorePowerMode != nil)
+	}
+	server.drop()
+	if controller.restoreCalls != 1 {
+		t.Fatalf("restore called %d times, want 1", controller.restoreCalls)
+	}
+	if server.restorePowerMode != nil {
+		t.Fatal("drop retained restore function")
+	}
+}
+
+type fakePowerModeController struct {
+	mode         powermode.Mode
+	restoreCalls int
+}
+
+func (f *fakePowerModeController) Set(mode powermode.Mode) (func() error, error) {
+	f.mode = mode
+	return func() error {
+		f.restoreCalls++
+		return nil
+	}, nil
+}
+
+type fakeGovernorSetter struct {
+	percents []int
+	err      error
+}
+
+func (f *fakeGovernorSetter) SetGovernor(percent int) error {
+	f.percents = append(f.percents, percent)
+	return f.err
+}
+
+func TestApplyGovernor(t *testing.T) {
+	requestErr := fmt.Errorf("pin failed")
+	for _, test := range []struct {
+		name        string
+		shared      bool
+		setting     governorFlag
+		requestErr  error
+		wantCalls   []int
+		wantWarning string
+		wantFatal   string
+	}{
+		{name: "disabled", setting: governorFlag{percent: -1}},
+		{name: "shared", shared: true, setting: governorFlag{percent: 90}},
+		{name: "success", setting: governorFlag{percent: 90}, wantCalls: []int{90}},
+		{
+			name:        "implicit failure warns",
+			setting:     governorFlag{percent: 90},
+			requestErr:  requestErr,
+			wantCalls:   []int{90},
+			wantWarning: "unable to set CPU governor: pin failed",
+		},
+		{
+			name:       "explicit failure is fatal",
+			setting:    governorFlag{percent: 75, explicit: true},
+			requestErr: requestErr,
+			wantCalls:  []int{75},
+			wantFatal:  "setting CPU governor: pin failed",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			setter := &fakeGovernorSetter{err: test.requestErr}
+			warning, fatal := applyGovernor(setter, test.shared, &test.setting)
+			if got := errorText(warning); got != test.wantWarning {
+				t.Fatalf("warning = %q, want %q", got, test.wantWarning)
+			}
+			if got := errorText(fatal); got != test.wantFatal {
+				t.Fatalf("fatal = %q, want %q", got, test.wantFatal)
+			}
+			if fmt.Sprint(setter.percents) != fmt.Sprint(test.wantCalls) {
+				t.Fatalf("SetGovernor calls = %v, want %v", setter.percents, test.wantCalls)
+			}
+		})
+	}
+}
+
+func errorText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func TestValidateGovernorRequest(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		server  Server
+		wantErr string
+	}{
+		{name: "no lock", wantErr: "without exclusive lock"},
+		{name: "shared lock", server: Server{locker: &Locker{shared: true}}, wantErr: "without exclusive lock"},
+		{name: "exclusive lock", server: Server{locker: &Locker{shared: false}}},
+		{
+			name: "duplicate",
+			server: Server{
+				locker:          &Locker{shared: false},
+				restoreGovernor: func() error { return nil },
+			},
+			wantErr: "setting governor twice",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.server.validateGovernorRequest()
+			if test.wantErr == "" && err != nil {
+				t.Fatalf("validateGovernorRequest: %v", err)
+			}
+			if test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+				t.Fatalf("validateGovernorRequest error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestServerGovernorLifecycle(t *testing.T) {
+	controller := &fakePerformanceController{}
+	server := &Server{
+		openPerformanceController: func() (perfctl.Controller, error) {
+			return controller, nil
+		},
+	}
+	if err := server.setGovernor(-1); err == nil {
+		t.Fatal("negative governor percentage succeeded")
+	}
+	if controller.pinCalls != 0 {
+		t.Fatalf("invalid request opened controller %d times", controller.pinCalls)
+	}
+
+	if err := server.setGovernor(60); err != nil {
+		t.Fatalf("setGovernor: %v", err)
+	}
+	if controller.percent != 60 || server.restoreGovernor == nil {
+		t.Fatalf("controller = {%d %v}, want {60 restore}", controller.percent, server.restoreGovernor != nil)
+	}
+	server.drop()
+	if controller.restoreCalls != 1 {
+		t.Fatalf("restore called %d times, want 1", controller.restoreCalls)
+	}
+	if server.restoreGovernor != nil {
+		t.Fatal("drop retained restore function")
+	}
+}
+
+type fakePerformanceController struct {
+	pinCalls     int
+	percent      int
+	restoreCalls int
+}
+
+func (f *fakePerformanceController) Pin(percent int) (func() error, error) {
+	f.pinCalls++
+	f.percent = percent
+	return func() error {
+		f.restoreCalls++
+		return nil
+	}, nil
 }
 
 func TestGovernorFlag(t *testing.T) {
@@ -156,6 +424,22 @@ func TestExclusive(t *testing.T) {
 				t.Errorf("exclusive programs %d and %d overlapped: %v and %v", i, j, a, b)
 			}
 		}
+	}
+}
+
+func TestListShowsHeldCommand(t *testing.T) {
+	socket := socketName(t)
+	mustStartDaemon(t, socket)
+
+	client := NewClient(socket)
+	const message = "proof-command --flag"
+	if !client.Acquire(false, false, message) {
+		t.Fatal("exclusive lock was not acquired")
+	}
+
+	list := NewClient(socket).List()
+	if len(list) != 1 || !strings.Contains(list[0], message) {
+		t.Fatalf("list = %q, want one entry containing %q", list, message)
 	}
 }
 
