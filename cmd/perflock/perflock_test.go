@@ -6,7 +6,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aclements/perflock/internal/ipc"
 	"github.com/aclements/perflock/internal/perfctl"
 )
 
@@ -236,7 +236,7 @@ func TestMain(m *testing.M) {
 
 func waitForDaemon(t *testing.T, ctx context.Context, socket string) bool {
 	for {
-		c, err := net.Dial("unix", socket)
+		c, err := ipc.Dial(socket)
 		if err != nil {
 			// TODO(aktau): Deal with errors that aren't not found?
 			select {
@@ -279,6 +279,22 @@ func TestExclusive(t *testing.T) {
 				t.Errorf("exclusive programs %d and %d overlapped: %v and %v", i, j, a, b)
 			}
 		}
+	}
+}
+
+func TestListShowsHeldCommand(t *testing.T) {
+	socket := socketName(t)
+	mustStartDaemon(t, socket)
+
+	client := NewClient(socket)
+	const message = "proof-command --flag"
+	if !client.Acquire(false, false, message) {
+		t.Fatal("exclusive lock was not acquired")
+	}
+
+	list := NewClient(socket).List()
+	if len(list) != 1 || !strings.Contains(list[0], message) {
+		t.Fatalf("list = %q, want one entry containing %q", list, message)
 	}
 }
 
@@ -334,6 +350,9 @@ const darwinUnixSocketPathMax = 103
 func socketName(t *testing.T) string {
 	t.Helper()
 
+	if runtime.GOOS == "windows" {
+		return fmt.Sprintf(`\\.\pipe\perflock-test-%d-%s`, os.Getpid(), funcname(2))
+	}
 	if runtime.GOOS == "linux" {
 		// Abstract sockets are automatically cleaned up when the process that
 		// created it (the daemon) exits. Avoids potential complications with the

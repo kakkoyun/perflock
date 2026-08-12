@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log"
 	"net"
+
+	"github.com/aclements/perflock/internal/ipc"
 )
 
 type Client struct {
@@ -19,7 +21,7 @@ type Client struct {
 }
 
 func NewClient(socketPath string) *Client {
-	c, err := net.Dial("unix", socketPath)
+	c, err := ipc.Dial(socketPath)
 	if err != nil {
 		log.Print(err)
 		log.Fatal("Is the perflock daemon running?")

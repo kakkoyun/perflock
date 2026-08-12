@@ -42,6 +42,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/aclements/perflock/internal/ipc"
 	"github.com/aclements/perflock/internal/perfctl"
 )
 
@@ -61,7 +62,7 @@ func main() {
 	}
 	flagDaemon := flag.Bool("daemon", false, "start perflock daemon")
 	flagList := flag.Bool("list", false, "print current and pending commands")
-	flagSocket := flag.String("socket", "/var/run/perflock.socket", "connect to socket `path`")
+	flagSocket := flag.String("socket", ipc.DefaultAddr, "connect to endpoint `path`")
 	flagShared := flag.Bool("shared", false, "acquire lock in shared mode (default: exclusive mode)")
 	flagGovernor := newGovernorFlag()
 	flag.Var(flagGovernor, "governor", "set CPU frequency to `percent` between the min and max\n\twhile running command, or \"none\" for no adjustment")
