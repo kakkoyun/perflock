@@ -162,7 +162,10 @@ func (f *governorFlag) Set(v string) error {
 		if m == nil {
 			return fmt.Errorf("governor must be \"none\" or \"N%%\"")
 		}
-		percent, _ := strconv.Atoi(m[1])
+		percent, err := strconv.Atoi(m[1])
+		if err != nil {
+			return fmt.Errorf("invalid governor percentage %q: %w", m[1], err)
+		}
 		if percent > 100 {
 			return fmt.Errorf("governor must be between 0%% and 100%%")
 		}
