@@ -13,7 +13,11 @@ import (
 	"strings"
 )
 
-const pmsetPath = "/usr/bin/pmset"
+const (
+	pmsetPath = "/usr/bin/pmset"
+	// Supported reports whether this platform exposes macOS power modes.
+	Supported = true
+)
 
 type settings struct {
 	battery *Mode
