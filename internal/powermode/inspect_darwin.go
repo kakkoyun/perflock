@@ -13,14 +13,31 @@ import (
 	"strings"
 )
 
-const sysctlPath = "/usr/sbin/sysctl"
+type inspectAPI interface {
+	pmset(args ...string) ([]byte, error)
+	sysctl(args ...string) ([]byte, error)
+}
+
+type systemInspectAPI struct{}
+
+func (systemInspectAPI) pmset(args ...string) ([]byte, error) {
+	return exec.Command("/usr/bin/pmset", args...).CombinedOutput()
+}
+
+func (systemInspectAPI) sysctl(args ...string) ([]byte, error) {
+	return exec.Command("/usr/sbin/sysctl", args...).CombinedOutput()
+}
 
 // Inspect reports macOS power and performance conditions that can make
 // benchmark results less stable.
 func Inspect() []Message {
+	return inspect(systemInspectAPI{})
+}
+
+func inspect(api inspectAPI) []Message {
 	var messages []Message
 
-	powerOutput, err := exec.Command(pmsetPath, "-g", "ps").CombinedOutput()
+	powerOutput, err := api.pmset("-g", "ps")
 	powerSource := ""
 	if err == nil {
 		powerSource = parsePowerSource(string(powerOutput))
@@ -29,7 +46,7 @@ func Inspect() []Message {
 		}
 	}
 
-	controller := &darwinController{runner: systemRunner{}}
+	controller := &darwinController{runner: inspectRunner{api: api}}
 	if settings, err := controller.readSettings(); err == nil {
 		var active *Mode
 		switch powerSource {
@@ -43,20 +60,28 @@ func Inspect() []Message {
 		}
 	}
 
-	if thermalOutput, err := exec.Command(pmsetPath, "-g", "therm").CombinedOutput(); err == nil {
+	if thermalOutput, err := api.pmset("-g", "therm"); err == nil {
 		messages = append(messages, parseThermalWarnings(string(thermalOutput))...)
 	}
 
-	if topologyOutput, err := exec.Command(sysctlPath,
+	if topologyOutput, err := api.sysctl(
 		"hw.nperflevels",
 		"hw.perflevel0.name", "hw.perflevel0.logicalcpu",
 		"hw.perflevel1.name", "hw.perflevel1.logicalcpu",
-	).CombinedOutput(); err == nil {
+	); err == nil {
 		if topology, ok := parseTopology(string(topologyOutput)); ok {
 			messages = append(messages, Message{Text: topology})
 		}
 	}
 	return messages
+}
+
+type inspectRunner struct {
+	api inspectAPI
+}
+
+func (r inspectRunner) run(args ...string) ([]byte, error) {
+	return r.api.pmset(args...)
 }
 
 func parsePowerSource(output string) string {

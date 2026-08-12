@@ -48,12 +48,17 @@ type Server struct {
 	acquiring bool
 
 	openPerformanceController func() (perfctl.Controller, error)
+	openPowerModeController   func() (powermode.Controller, error)
 	restoreGovernor           func() error
 	restorePowerMode          func() error
 }
 
 func NewServer(c net.Conn) *Server {
-	return &Server{c: c, openPerformanceController: perfctl.Open}
+	return &Server{
+		c:                         c,
+		openPerformanceController: perfctl.Open,
+		openPowerModeController:   powermode.Open,
+	}
 }
 
 func (s *Server) Serve() {
@@ -141,12 +146,8 @@ func (s *Server) Serve() {
 				}
 
 			case ActionSetPowerMode:
-				if s.locker == nil || s.locker.shared {
-					log.Printf("protocol error: setting power mode without exclusive lock")
-					return
-				}
-				if s.restorePowerMode != nil {
-					log.Printf("protocol error: setting power mode twice")
+				if err := s.validatePowerModeRequest(); err != nil {
+					log.Printf("protocol error: %v", err)
 					return
 				}
 				mode := powermode.Mode(action.Mode)
@@ -218,8 +219,18 @@ func (s *Server) setGovernor(percent int) error {
 	return nil
 }
 
+func (s *Server) validatePowerModeRequest() error {
+	if s.locker == nil || s.locker.shared {
+		return fmt.Errorf("setting power mode without exclusive lock")
+	}
+	if s.restorePowerMode != nil {
+		return fmt.Errorf("setting power mode twice")
+	}
+	return nil
+}
+
 func (s *Server) setPowerMode(mode powermode.Mode) error {
-	controller, err := powermode.Open()
+	controller, err := s.openPowerModeController()
 	if err != nil {
 		return err
 	}
