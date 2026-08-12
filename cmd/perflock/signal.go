@@ -11,7 +11,8 @@ import (
 )
 
 func ignoreSignals() {
-	// Ignore SIGINT and SIGQUIT so they pass through to the
-	// child.
+	// Register handlers that deliberately drop SIGINT and SIGQUIT in the parent.
+	// signal.Ignore is not suitable here: exec'd children inherit SIG_IGN and
+	// would ignore the same signals instead of receiving the console interrupt.
 	signal.Notify(make(chan os.Signal), os.Interrupt, syscall.SIGQUIT)
 }

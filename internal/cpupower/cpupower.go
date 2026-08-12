@@ -6,7 +6,6 @@
 package cpupower
 
 import (
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,7 +25,7 @@ var cpuRe = regexp.MustCompile(`cpu\d+$`)
 // Domains returns the frequency scaling domains of this host.
 func Domains() ([]*Domain, error) {
 	dir := "/sys/devices/system/cpu"
-	fs, err := ioutil.ReadDir(dir)
+	fs, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +39,7 @@ func Domains() ([]*Domain, error) {
 		pdir := filepath.Join(dir, f.Name(), "cpufreq")
 
 		// Get the frequency domain, if any.
-		cpus, err := ioutil.ReadFile(filepath.Join(pdir, "freqdomain_cpus"))
+		cpus, err := os.ReadFile(filepath.Join(pdir, "freqdomain_cpus"))
 		if err == nil {
 			if haveDomains[string(cpus)] {
 				// We already have a CPU in this domain.

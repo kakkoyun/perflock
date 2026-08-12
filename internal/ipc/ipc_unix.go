@@ -17,7 +17,7 @@ import (
 	"syscall"
 	"time"
 
-	"inet.af/peercred"
+	"github.com/tailscale/peercred"
 )
 
 // DefaultAddr is the system-wide perflock socket path.
