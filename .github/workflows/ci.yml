@@ -66,30 +66,28 @@ jobs:
           mkdir -p "$long_tmp"
           TMPDIR="$long_tmp" go test -race -count=1 ./cmd/perflock
 
-      - name: Check Bash installer syntax on Linux
+      - name: Test Bash installer behavior
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bash -n install.bash test/install_test.bash
+          bash test/install_test.bash
+
+      - name: Check Bash installer style
         if: runner.os == 'Linux'
-        run: bash -n install.bash
+        shell: bash
+        run: |
+          shellcheck install.bash test/install_test.bash
+          go run mvdan.cc/sh/v3/cmd/shfmt@v3.12.0 \
+            -d -i 2 install.bash test/install_test.bash
 
-      - name: Check Bash installer syntax on macOS
+      - name: Test launchd job semantics
         if: runner.os == 'macOS'
-        run: bash -n install.bash
+        run: |
+          plutil -lint init/launchd/com.github.aclements.perflock.plist
+          python3 test/launchd_test.py
 
-      - name: Check launchd property list
-        if: runner.os == 'macOS'
-        run: plutil -lint init/launchd/com.github.aclements.perflock.plist
-
-      - name: Check PowerShell installer syntax
+      - name: Test PowerShell installer semantics
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path init/windows/install.ps1),
-            [ref]$tokens,
-            [ref]$errors
-          ) | Out-Null
-          if ($errors.Count -gt 0) {
-            $errors | ForEach-Object { Write-Error $_ }
-            exit 1
-          }
+        run: ./init/windows/install.Tests.ps1
