@@ -54,6 +54,15 @@ jobs:
             -coverprofile=coverage.out ./...
           go tool cover -func=coverage.out
 
+      - name: Test Windows governor policy
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          go test -race -count=1 ./internal/perfctl
+          tests='^(TestGovernorFlag|TestApplyGovernor|'
+          tests+='TestValidateGovernorRequest|TestServerGovernorLifecycle)$'
+          go test -race -count=1 ./cmd/perflock -run "$tests"
+
       - name: Test with a long macOS temporary path
         if: runner.os == 'macOS'
         shell: bash
