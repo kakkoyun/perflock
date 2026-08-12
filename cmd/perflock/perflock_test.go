@@ -103,6 +103,36 @@ func errorText(err error) string {
 	return err.Error()
 }
 
+func TestValidateGovernorRequest(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		server  Server
+		wantErr string
+	}{
+		{name: "no lock", wantErr: "without exclusive lock"},
+		{name: "shared lock", server: Server{locker: &Locker{shared: true}}, wantErr: "without exclusive lock"},
+		{name: "exclusive lock", server: Server{locker: &Locker{shared: false}}},
+		{
+			name: "duplicate",
+			server: Server{
+				locker:          &Locker{shared: false},
+				restoreGovernor: func() error { return nil },
+			},
+			wantErr: "setting governor twice",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.server.validateGovernorRequest()
+			if test.wantErr == "" && err != nil {
+				t.Fatalf("validateGovernorRequest: %v", err)
+			}
+			if test.wantErr != "" && (err == nil || !strings.Contains(err.Error(), test.wantErr)) {
+				t.Fatalf("validateGovernorRequest error = %v, want %q", err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestServerGovernorLifecycle(t *testing.T) {
 	controller := &fakePerformanceController{}
 	server := &Server{
